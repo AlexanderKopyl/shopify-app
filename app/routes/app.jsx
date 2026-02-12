@@ -1,4 +1,4 @@
-import { Outlet, useLoaderData, useRouteError } from "react-router";
+import { Outlet, useLoaderData, useRouteError, Link } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { authenticate } from "../shopify.server";
@@ -10,15 +10,26 @@ export const loader = async ({ request }) => {
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
 
+// Custom Link component for Polaris to use React Router navigation
+// eslint-disable-next-line react/prop-types
+function PolarisLink({ url, children, ...rest }) {
+  return (
+    <Link to={url} {...rest}>
+      {children}
+    </Link>
+  );
+}
+
 export default function App() {
   const { apiKey } = useLoaderData();
 
   return (
-    <AppProvider embedded apiKey={apiKey}>
+    <AppProvider embedded apiKey={apiKey} linkComponent={PolarisLink}>
       <s-app-nav>
         <s-link href="/app">Home</s-link>
         <s-link href="/app/additional">Additional page</s-link>
         <s-link href="/app/product-editor">Product Editor</s-link>
+        <s-link href="/app/services">Services</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>
