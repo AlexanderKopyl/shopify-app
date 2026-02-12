@@ -19,7 +19,7 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const { redirect } = await authenticate.admin(request);
+  const { admin, redirect } = await authenticate.admin(request);
 
   const formData = await request.formData();
   const title = String(formData.get("title") || "").trim();
@@ -39,13 +39,67 @@ export const action = async ({ request }) => {
   }
 
   try {
-    await prisma.service.create({
+    // Create service in Prisma first
+    const service = await prisma.service.create({
       data: {
         title,
         description: description || null,
         imageUrl: imageUrl || null,
       },
     });
+
+    // Sync to Shopify Metaobject
+    const metaobjectFields = [
+      { key: "title", value: title },
+    ];
+
+    if (description) {
+      metaobjectFields.push({ key: "description", value: description });
+    }
+
+    if (imageUrl) {
+      metaobjectFields.push({ key: "image", value: imageUrl });
+    }
+
+    const metaobjectResponse = await admin.graphql(
+      `#graphql
+        mutation MetaobjectUpsert($handle: MetaobjectHandleInput!, $metaobject: MetaobjectUpsertInput!) {
+          metaobjectUpsert(handle: $handle, metaobject: $metaobject) {
+            metaobject {
+              id
+              handle
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }`,
+      {
+        variables: {
+          handle: {
+            type: "zoo_service",
+          },
+          metaobject: {
+            fields: metaobjectFields,
+          },
+        },
+      }
+    );
+
+    const metaobjectData = await metaobjectResponse.json();
+    const metaobjectResult = metaobjectData.data?.metaobjectUpsert;
+
+    if (metaobjectResult?.userErrors?.length > 0) {
+      console.error("Metaobject creation errors:", metaobjectResult.userErrors);
+      // Continue even if metaobject creation fails - service is already in Prisma
+    } else if (metaobjectResult?.metaobject?.id) {
+      // Update Prisma with Shopify Metaobject ID
+      await prisma.service.update({
+        where: { id: service.id },
+        data: { metaobjectId: metaobjectResult.metaobject.id },
+      });
+    }
 
     return redirect("/app");
   } catch (error) {

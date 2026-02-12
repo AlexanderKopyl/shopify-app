@@ -34,10 +34,11 @@ model Session {
 }
 
 model Service {
-  id          Int      @id @default(autoincrement())
-  title       String
-  description String?
-  imageUrl    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            Int      @id @default(autoincrement())
+  title         String
+  description   String?
+  imageUrl      String?
+  metaobjectId  String?  // Shopify Metaobject ID (gid://...)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }

@@ -35,7 +35,7 @@ export const loader = async ({ request, params }) => {
 };
 
 export const action = async ({ request, params }) => {
-  const { redirect } = await authenticate.admin(request);
+  const { admin, redirect } = await authenticate.admin(request);
 
   const serviceId = parseInt(params.id, 10);
   const formData = await request.formData();
@@ -44,9 +44,42 @@ export const action = async ({ request, params }) => {
   // Handle delete
   if (intent === "delete") {
     try {
+      // Get service to find metaobjectId
+      const service = await prisma.service.findUnique({
+        where: { id: serviceId },
+      });
+
+      // Delete from Prisma
       await prisma.service.delete({
         where: { id: serviceId },
       });
+
+      // Delete from Shopify Metaobjects if it exists
+      if (service?.metaobjectId) {
+        try {
+          await admin.graphql(
+            `#graphql
+              mutation MetaobjectDelete($id: ID!) {
+                metaobjectDelete(id: $id) {
+                  deletedId
+                  userErrors {
+                    field
+                    message
+                  }
+                }
+              }`,
+            {
+              variables: {
+                id: service.metaobjectId,
+              },
+            }
+          );
+        } catch (error) {
+          console.error("Failed to delete metaobject:", error);
+          // Continue even if metaobject deletion fails
+        }
+      }
+
       return redirect("/app/services");
     } catch (error) {
       console.error("Failed to delete service:", error);
@@ -74,6 +107,12 @@ export const action = async ({ request, params }) => {
   }
 
   try {
+    // Get existing service to find metaobjectId
+    const existingService = await prisma.service.findUnique({
+      where: { id: serviceId },
+    });
+
+    // Update service in Prisma
     await prisma.service.update({
       where: { id: serviceId },
       data: {
@@ -82,6 +121,62 @@ export const action = async ({ request, params }) => {
         imageUrl: imageUrl || null,
       },
     });
+
+    // Sync to Shopify Metaobject
+    const metaobjectFields = [
+      { key: "title", value: title },
+    ];
+
+    if (description) {
+      metaobjectFields.push({ key: "description", value: description });
+    }
+
+    if (imageUrl) {
+      metaobjectFields.push({ key: "image", value: imageUrl });
+    }
+
+    // Determine handle: use existing metaobjectId if available, otherwise create new
+    const handle = existingService?.metaobjectId
+      ? { id: existingService.metaobjectId }
+      : { type: "zoo_service" };
+
+    const metaobjectResponse = await admin.graphql(
+      `#graphql
+        mutation MetaobjectUpsert($handle: MetaobjectHandleInput!, $metaobject: MetaobjectUpsertInput!) {
+          metaobjectUpsert(handle: $handle, metaobject: $metaobject) {
+            metaobject {
+              id
+              handle
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }`,
+      {
+        variables: {
+          handle,
+          metaobject: {
+            fields: metaobjectFields,
+          },
+        },
+      }
+    );
+
+    const metaobjectData = await metaobjectResponse.json();
+    const metaobjectResult = metaobjectData.data?.metaobjectUpsert;
+
+    if (metaobjectResult?.userErrors?.length > 0) {
+      console.error("Metaobject update errors:", metaobjectResult.userErrors);
+      // Continue even if metaobject update fails
+    } else if (metaobjectResult?.metaobject?.id && !existingService?.metaobjectId) {
+      // Update Prisma with Shopify Metaobject ID if it was newly created
+      await prisma.service.update({
+        where: { id: serviceId },
+        data: { metaobjectId: metaobjectResult.metaobject.id },
+      });
+    }
 
     return redirect("/app/services");
   } catch (error) {
